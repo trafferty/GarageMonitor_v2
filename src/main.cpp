@@ -2,8 +2,9 @@
 
 #include <ArduinoOTA.h>
 #include <ESP8266WiFi.h>
-
 #include <ESP8266WebServer.h>
+#include <EEPROM.h>
+
 #include <Time.h>
 
 #include <sierra_wifi_defs.h>
@@ -21,6 +22,9 @@ const int out_HB_LED = LED_BUILTIN;
 
 unsigned long prevMillis;
 unsigned long HB_period_ms = 100;
+
+#define EEPROM_SIZE 15
+#define UPDATE_VAL  23
 
 /*
 **  Network variables...
@@ -46,6 +50,7 @@ tmElements_t tmCriticalEnd;
 time_t criticalStart_time;
 time_t criticalEnd_time;
 time_t now_time;
+bool init_from_EEPROM = false;
 
 bool NTPTimeSet = false;
 char ntpServerNamePrimary[] = "pool.ntp.org";
@@ -65,6 +70,13 @@ time_t getNtpTime();
 void digitalClockDisplay();
 void printDigits(int digits);
 void sendNTPpacket(IPAddress &address);
+
+enum Mem_Locs {
+    update_flag,
+    critStart_sec, critStart_min, critStart_hour, critEnd_sec, critEnd_min, critEnd_hour,
+    s2_sec, s2_min, s2_hour, e2_sec, e2_min, e2_hour,
+    blinkDelay, randomDelay
+};
 
 /*
  * Blink
@@ -105,10 +117,50 @@ void setup()
     setSyncInterval(5);
     NTPTimeSet = false;
 
+    // if analog input pin 0 is unconnected, random analog
+    // noise will cause the call to randomSeed() to generate
+    // different seed numbers each time the sketch runs.
+    // randomSeed() will then shuffle the random function.
+    randomSeed(analogRead(A0));
+
+
+    // initialize EEPROM with predefined size
+    EEPROM.begin(EEPROM_SIZE);
+
+    Serial.println("Initializing start/end times:");
+    // setup start/end time structs for scheduler
+    //if (UPDATE_VAL == EEPROM.read(update_flag))
+    if (false)
+    {
+        Serial.println("...updating from EEPROM");
+        tmCriticalStart.Second = EEPROM.read(critStart_sec);
+        tmCriticalStart.Minute = EEPROM.read(critStart_min);
+        tmCriticalStart.Hour   = EEPROM.read(critStart_hour);
+        tmCriticalEnd.Second   = EEPROM.read(critEnd_sec);
+        tmCriticalEnd.Minute   = EEPROM.read(critEnd_min);
+        tmCriticalEnd.Hour     = EEPROM.read(critEnd_hour);
+        init_from_EEPROM = true;
+    }
+    else
+    {
+        Serial.println("...initializing to default values");
+        tmCriticalStart.Second = 0;
+        tmCriticalStart.Minute = 0;
+        tmCriticalStart.Hour   = 18;
+        tmCriticalEnd.Second   = 0;
+        tmCriticalEnd.Minute   = 0;
+        tmCriticalEnd.Hour     = 23;
+        init_from_EEPROM = false;
+    }
+
+
 
     // get timestamp for heartbeat LED
     prevMillis = millis();
 }
+
+
+
 
 void loop()
 {
@@ -139,7 +191,31 @@ void loop()
     }
 
     criticalStart_time = makeTimeToday(tmCriticalStart);
-    criticalEnd_time = makeTimeToday(tmCriticalEnd);
+    criticalEnd_time   = makeTimeToday(tmCriticalEnd);
+
+    if (digitalRead(in_GarageDoor)  == HIGH)
+    {
+        String str  = "Garage door is open at: ";
+        str += buildDateTimeStr(now());
+        Serial.println(str);
+
+        digitalWrite(out_GarageLight, (random(1, 100) > 50 ? HIGH : LOW));
+        digitalWrite(out_KitchenLight, (random(1, 100) > 50 ? HIGH : LOW));
+        digitalWrite(out_PiezoAlarm, (random(1, 100) > 50 ? HIGH : LOW));
+        delay( 200 );
+    }
+    else
+    {
+        digitalWrite(out_GarageLight, LOW);
+        digitalWrite(out_KitchenLight, LOW);
+        digitalWrite(out_PiezoAlarm, LOW);
+    }
+
+    // String str  = "Current time: ";
+    // str += buildDateTimeStr(now()) + "\n";
+    // str += "criticalStart_time: " + String(criticalStart_time) + " - (" + buildDateTimeStr(criticalStart_time) + ")\n";
+    // str += "criticalEnd_time  : " + String(criticalEnd_time) + " - (" + buildDateTimeStr(criticalEnd_time) + ")\n";
+    // Serial.println(str);
 
 
 }
@@ -323,4 +399,32 @@ void sendNTPpacket(IPAddress &address)
     Udp.beginPacket(address, 123); // NTP requests are to port 123
     Udp.write(packetBuffer, NTP_PACKET_SIZE);
     Udp.endPacket();
+}
+
+void handle_action_setup_timing()
+{
+//   Serial.println("Setting up new timing values...");
+//   tmStart1.Second = (server.arg("s1_sec")).toInt(); 
+//   tmStart1.Minute = (server.arg("s1_min")).toInt(); 
+//   tmStart1.Hour   = (server.arg("s1_hour")).toInt(); 
+//   tmEnd1.Second   = (server.arg("e1_sec")).toInt(); 
+//   tmEnd1.Minute   = (server.arg("e1_min")).toInt(); 
+//   tmEnd1.Hour     = (server.arg("e1_hour")).toInt(); 
+//   tmStart2.Second = (server.arg("s2_sec")).toInt(); 
+//   tmStart2.Minute = (server.arg("s2_min")).toInt(); 
+//   tmStart2.Hour   = (server.arg("s2_hour")).toInt(); 
+//   tmEnd2.Second   = (server.arg("e2_sec")).toInt(); 
+//   tmEnd2.Minute   = (server.arg("e2_min")).toInt(); 
+//   tmEnd2.Hour     = (server.arg("e2_hour")).toInt();
+
+//   blinkDelay_ms   = (server.arg("blinkDelay_ms")).toInt();
+//   randomDelay_ms  = (server.arg("randomDelay_ms")).toInt();
+
+  EEPROM.write(critStart_sec,  tmCriticalStart.Second);
+  EEPROM.write(critStart_min,  tmCriticalStart.Minute);
+  EEPROM.write(critStart_hour, tmCriticalStart.Hour  );
+  EEPROM.write(critEnd_sec,  tmCriticalEnd.Second  );
+  EEPROM.write(critEnd_min,  tmCriticalEnd.Minute  );
+  EEPROM.write(critEnd_hour, tmCriticalEnd.Hour    );
+  EEPROM.commit();
 }
