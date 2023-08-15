@@ -9,9 +9,17 @@
 
 #include <sierra_wifi_defs.h>
 
+#define version_str "v0.5-2023-08-12(sorting out main loop logic)"
+
+
 /*
 **  global variables...
 */
+
+enum DoorState_t {
+    DOOR_OPEN   = HIGH,
+    DOOR_CLOSED = LOW
+};
 
 // GPIO assignments
 const int in_GarageDoor = D1;
@@ -23,11 +31,13 @@ const int out_HB_LED = LED_BUILTIN;
 unsigned long prevMillis;
 unsigned long HB_period_ms = 100;
 
+bool garageDoorState_prev = false;
+
 #define EEPROM_SIZE 15
 #define UPDATE_VAL  23
 
 /*
-**  Network variables...
+**  Network variables... 
 */
 IPAddress ip(IP1, IP2, IP3, GARAGE_MONITOR_v2_IP_LAST_FIELD); // make sure IP is *outside* of DHCP pool range
 IPAddress gateway(GW1, GW2, GW3, GW4);
@@ -87,6 +97,9 @@ enum Mem_Locs {
 void setup()
 {
     Serial.begin(115200);
+    Serial.print("\nGarageMonitor v2. Version: ");
+    Serial.println(version_str);
+
 
     // Prepare the pins to fire
     pinMode(in_GarageDoor, INPUT);
@@ -193,7 +206,9 @@ void loop()
     criticalStart_time = makeTimeToday(tmCriticalStart);
     criticalEnd_time   = makeTimeToday(tmCriticalEnd);
 
-    if (digitalRead(in_GarageDoor)  == HIGH)
+    bool garageDoor_current = digitalRead(in_GarageDoor);
+
+    if (garageDoor_current == DOOR_OPEN)
     {
         String str  = "Garage door is open at: ";
         str += buildDateTimeStr(now());
