@@ -23,9 +23,9 @@ enum DoorState_t {
 
 // GPIO assignments
 const int in_GarageDoor = D1;
-const int out_GarageLight = D8;
+const int out_GarageLight = D6;
 const int out_KitchenLight = D7;
-const int out_PiezoAlarm = D6;
+const int out_PiezoAlarm = D8;
 const int out_HB_LED = LED_BUILTIN;
 
 unsigned long prevMillis;
@@ -70,7 +70,7 @@ char *ntpServerName = ntpServerNamePrimary;
 // forward declarations...
 time_t secondsOfDay(const tmElements_t &tm);
 time_t makeTimeToday(tmElements_t &tm);
-bool insideTimePeriod(time_t currentTime, tmElements_t &tm_start, tmElements_t &tm_end);
+bool insideTimePeriod(tmElements_t &tm_start, tmElements_t &tm_end);
 String buildDateTimeStr(time_t t);
 String buildTimeStr(time_t t);
 String formatNumber(int num);
@@ -158,11 +158,11 @@ void setup()
     {
         Serial.println("...initializing to default values");
         tmCriticalStart.Second = 0;
-        tmCriticalStart.Minute = 0;
-        tmCriticalStart.Hour   = 18;
+        tmCriticalStart.Minute = 45;
+        tmCriticalStart.Hour   = 21;
         tmCriticalEnd.Second   = 0;
-        tmCriticalEnd.Minute   = 0;
-        tmCriticalEnd.Hour     = 23;
+        tmCriticalEnd.Minute   = 46;
+        tmCriticalEnd.Hour     = 21;
         init_from_EEPROM = false;
     }
 
@@ -207,17 +207,22 @@ void loop()
     criticalEnd_time   = makeTimeToday(tmCriticalEnd);
 
     bool garageDoor_current = digitalRead(in_GarageDoor);
+    time_t currentTime = now();
 
     if (garageDoor_current == DOOR_OPEN)
     {
         String str  = "Garage door is open at: ";
-        str += buildDateTimeStr(now());
+        str += buildDateTimeStr(currentTime);
         Serial.println(str);
 
-        digitalWrite(out_GarageLight, (random(1, 100) > 50 ? HIGH : LOW));
-        digitalWrite(out_KitchenLight, (random(1, 100) > 50 ? HIGH : LOW));
-        digitalWrite(out_PiezoAlarm, (random(1, 100) > 50 ? HIGH : LOW));
-        delay( 200 );
+        digitalWrite(out_GarageLight, HIGH );
+
+        if (insideTimePeriod(tmCriticalStart, tmCriticalEnd))
+        {
+            digitalWrite(out_PiezoAlarm, HIGH);
+        }
+
+        delay( 500 );
     }
     else
     {
@@ -254,7 +259,7 @@ time_t makeTimeToday(tmElements_t &tm)
     return makeTime(tm);
 }
 
-bool insideTimePeriod(time_t currentTime, tmElements_t &tm_start, tmElements_t &tm_end)
+bool insideTimePeriod(tmElements_t &tm_start, tmElements_t &tm_end)
 {
     bool insideTimePer = false;
     time_t criticalStart_time;
