@@ -1,6 +1,6 @@
 #include <Arduino.h>
+#include <WiFiUdp.h>
 
-#include <ArduinoOTA.h>
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>
 #include <EEPROM.h>
@@ -17,19 +17,19 @@
 */
 
 enum DoorState_t {
-    DOOR_OPEN   = HIGH,
-    DOOR_CLOSED = LOW
+    DOOR_OPEN   = LOW,
+    DOOR_CLOSED = HIGH
 };
 
 // GPIO assignments
-const int in_GarageDoor = D1;
-const int out_GarageLight = D6;
-const int out_KitchenLight = D7;
-const int out_PiezoAlarm = D8;
-const int out_HB_LED = LED_BUILTIN;
+const int in_GarageDoor = D5;
+const int out_GarageLight = D1;
+const int out_KitchenLight = D3;
+const int out_PiezoAlarm = D2;
+const int out_HB_LED = D0;
 
 unsigned long prevMillis;
-unsigned long HB_period_ms = 100;
+unsigned long HB_period_ms = 1000;
 
 bool garageDoorState_prev = false;
 
@@ -54,6 +54,16 @@ ESP8266WebServer server(server_port);
 WiFiUDP Udp;
 unsigned int UdpPort = 8888; // local port to listen for UDP packets
 
+typedef enum {
+    state_unknown, state_open, state_closed
+} Door_States_t;
+
+Door_States_t doorState = state_unknown;
+long unsigned doorEvent_time_milli;
+
+long unsigned GarageLightOnPeriod_ms = 1000 * 60 * 10;
+bool garageLightOn = false;
+
 // structs to hold start/end times for scheduling.
 tmElements_t tmCriticalStart;
 tmElements_t tmCriticalEnd;
@@ -68,6 +78,8 @@ char ntpServerNameSecondary[] = "time.nist.gov";
 char *ntpServerName = ntpServerNamePrimary;
 
 // forward declarations...
+void doBeep(int piezoOutput, int duration_ms, int numTimes);
+
 time_t secondsOfDay(const tmElements_t &tm);
 time_t makeTimeToday(tmElements_t &tm);
 bool insideTimePeriod(tmElements_t &tm_start, tmElements_t &tm_end);
@@ -88,12 +100,6 @@ enum Mem_Locs {
     blinkDelay, randomDelay
 };
 
-/*
- * Blink
- * Turns on an LED on for one second,
- * then off for one second, repeatedly.
- */
-
 void setup()
 {
     Serial.begin(115200);
@@ -113,13 +119,14 @@ void setup()
     digitalWrite(out_PiezoAlarm, LOW);
 
     // blink the heartbeat LED a few times to indicate we're starting up wifi
-    for (int i = 0; i < 3; ++i)
+    for (int i = 0; i < 6; ++i)
     {
         digitalWrite(out_HB_LED, !digitalRead(out_HB_LED));
         delay(100);
     }
 
     wifi_init();
+    doBeep(out_PiezoAlarm, 200, 1);
 
     Serial.println("Starting UDP");
     Udp.begin(UdpPort);
@@ -166,14 +173,11 @@ void setup()
         init_from_EEPROM = false;
     }
 
-
+    doBeep(out_PiezoAlarm, 200, 1);
 
     // get timestamp for heartbeat LED
     prevMillis = millis();
 }
-
-
-
 
 void loop()
 {
@@ -211,24 +215,51 @@ void loop()
 
     if (garageDoor_current == DOOR_OPEN)
     {
-        String str  = "Garage door is open at: ";
-        str += buildDateTimeStr(currentTime);
-        Serial.println(str);
-
-        digitalWrite(out_GarageLight, HIGH );
-
-        if (insideTimePeriod(tmCriticalStart, tmCriticalEnd))
+        if (doorState != state_open)
         {
-            digitalWrite(out_PiezoAlarm, HIGH);
-        }
+            doorState = state_open;
+            doorEvent_time_milli = millis();
 
-        delay( 500 );
+            String str  = "Garage door is open at: ";
+            str += buildDateTimeStr(currentTime);
+            Serial.println(str);
+
+            digitalWrite(out_KitchenLight, HIGH );
+
+            digitalWrite(out_GarageLight, HIGH );
+            garageLightOn = true;
+
+            doBeep(out_PiezoAlarm, 200, 2);
+        }
     }
     else
     {
+        if (doorState == state_open)
+        {
+            doorState = state_closed;
+            doorEvent_time_milli = millis();
+
+            String str  = "Garage door is closed at: ";
+            str += buildDateTimeStr(currentTime);
+            Serial.println(str);
+
+            digitalWrite(out_GarageLight, HIGH);
+            garageLightOn = true;
+
+            digitalWrite(out_KitchenLight, LOW);
+
+            doBeep(out_PiezoAlarm, 200, 3);
+        }
+    }
+
+    if (garageLightOn && (millis() - doorEvent_time_milli >= GarageLightOnPeriod_ms))
+    {
+        String str  = "Shutting off garage light at: ";
+        str += buildDateTimeStr(currentTime);
+        Serial.println(str);
+
         digitalWrite(out_GarageLight, LOW);
-        digitalWrite(out_KitchenLight, LOW);
-        digitalWrite(out_PiezoAlarm, LOW);
+        garageLightOn = false;
     }
 
     // String str  = "Current time: ";
@@ -237,7 +268,18 @@ void loop()
     // str += "criticalEnd_time  : " + String(criticalEnd_time) + " - (" + buildDateTimeStr(criticalEnd_time) + ")\n";
     // Serial.println(str);
 
+    delay( 50 );
+}
 
+void doBeep(int piezoOutput, int duration_ms, int numTimes)
+{
+    for (int i=0; i<numTimes; ++i)
+    {
+        digitalWrite(piezoOutput, HIGH);
+        delay(duration_ms);
+        digitalWrite(piezoOutput, LOW);
+        delay(duration_ms);
+    }
 }
 
 /* ----- Util functions ----- */
@@ -288,7 +330,20 @@ bool insideTimePeriod(tmElements_t &tm_start, tmElements_t &tm_end)
     return insideTimePer;
 }
 
-/* ----- Util functions ----- */
+
+bool doesSpanMultipleDays(tmElements_t &tm_start, tmElements_t &tm_end)
+{
+        // Check to see if the time period spans 2 days
+    time_t start_secs = secondsOfDay(tm_start);
+    time_t end_secs = secondsOfDay(tm_end);
+
+    if (end_secs > start_secs)
+    {}
+        
+    return true;
+
+}
+
 void wifi_init()
 {
     Serial.print("Setting up network with static IP.");
