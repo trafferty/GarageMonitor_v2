@@ -29,6 +29,11 @@ unsigned long prevMillis;
 unsigned long HB_period_ms = 1000;
 
 // Network
+static const IPAddress staticIP (IP1, IP2, IP3, GARAGE_MONITOR_v2_IP_LAST_FIELD);
+static const IPAddress gatewayIP(GW1, GW2, GW3, GW4);
+static const IPAddress subnetIP (SN1, SN2, SN3, SN4);
+static const IPAddress dnsIP    (DNS1, DNS2, DNS3, DNS4);
+
 BearSSL::WiFiClientSecure wifiClientSecure;
 PubSubClient mqttClient(wifiClientSecure);
 int reconnectAttempts = 0;
@@ -41,7 +46,8 @@ String buildTimeDateStr();
 void publishDoorEvent(const char* event);
 
 void connectWiFi() {
-    Serial.print("Connecting to WiFi");
+    Serial.printf("Connecting to WiFi with static IP (%s)\n", GARAGE_MONITOR_v2_HOSTNAME);
+    WiFi.config(staticIP, gatewayIP, subnetIP, dnsIP);
     WiFi.mode(WIFI_STA);
     WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
     while (WiFi.status() != WL_CONNECTED) {
