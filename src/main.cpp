@@ -2,10 +2,12 @@
 #include <ESP8266WiFi.h>
 #include <WiFiClientSecure.h>
 #include <PubSubClient.h>
+#include <ESPAsyncTCP.h>
+#include <ESPAsyncWebServer.h>
 #include <time.h>
 #include "credentials.h"
 
-#define version_str "v0.8-2026-04-12(configTime NTP with DST)"
+#define version_str "v0.9-2026-04-12(add /status web server)"
 
 // GPIO assignments
 const int in_GarageDoor    = D5;
@@ -36,6 +38,7 @@ static const IPAddress dnsIP    (DNS1, DNS2, DNS3, DNS4);
 
 BearSSL::WiFiClientSecure wifiClientSecure;
 PubSubClient mqttClient(wifiClientSecure);
+AsyncWebServer server(80);
 int reconnectAttempts = 0;
 
 // Forward declarations
@@ -43,6 +46,7 @@ void doBeep(int piezoOutput, int duration_ms, int numTimes);
 void connectWiFi();
 void connectMQTT();
 String buildTimeDateStr();
+String createStatusHTML();
 void publishDoorEvent(const char* event);
 
 void connectWiFi() {
@@ -89,6 +93,40 @@ String buildTimeDateStr() {
     char buf[32];
     strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%S", ptm);
     return String(buf);
+}
+
+String createStatusHTML() {
+    const char* doorStateStr =
+        doorState == state_open   ? "OPEN" :
+        doorState == state_closed ? "CLOSED" : "UNKNOWN";
+    const char* doorColor =
+        doorState == state_open   ? "#c0392b" :
+        doorState == state_closed ? "#27ae60" : "#888888";
+
+    String ptr = "<!DOCTYPE html><html>\n";
+    ptr += "<style>\n";
+    ptr += "body{font-family:sans-serif;margin:20px;}\n";
+    ptr += "table,th,td{font-size:14px;border:1px solid;border-collapse:collapse;padding:5px;}\n";
+    ptr += ".door{font-size:48px;font-weight:bold;color:" + String(doorColor) + ";}\n";
+    ptr += "</style>\n";
+    ptr += "<body>\n";
+    ptr += "<h1>Garage Monitor v2</h1>\n";
+    ptr += "<p style=\"font-size:16px;\">Version: " + String(version_str) + "</p>\n";
+    ptr += "<p class=\"door\">Door: " + String(doorStateStr) + "</p>\n";
+    ptr += "<p style=\"font-size:16px;\">Last event: " + buildTimeDateStr() + "</p>\n";
+    ptr += "<h2>ESP Debug Info</h2>\n";
+    ptr += "<table><tbody>\n";
+    ptr += "<tr><th>Param</th><th>Value</th></tr>\n";
+    ptr += "<tr><td>Timestamp</td><td>" + buildTimeDateStr() + "</td></tr>\n";
+    ptr += "<tr><td>IP Address</td><td>" + WiFi.localIP().toString() + "</td></tr>\n";
+    ptr += "<tr><td>RSSI (dBm)</td><td>" + String(WiFi.RSSI()) + "</td></tr>\n";
+    ptr += "<tr><td>FreeHeap</td><td>" + String(ESP.getFreeHeap()) + "</td></tr>\n";
+    ptr += "<tr><td>MaxFreeBlockSize</td><td>" + String(ESP.getMaxFreeBlockSize()) + "</td></tr>\n";
+    ptr += "<tr><td>HeapFragmentation</td><td>" + String(ESP.getHeapFragmentation()) + "%</td></tr>\n";
+    ptr += "<tr><td>Uptime (s)</td><td>" + String(millis() / 1000) + "</td></tr>\n";
+    ptr += "</tbody></table>\n";
+    ptr += "</body></html>\n";
+    return ptr;
 }
 
 void publishDoorEvent(const char* event) {
@@ -146,6 +184,14 @@ void setup() {
     mqttClient.setServer(MQTT_HOST, MQTT_PORT);
     mqttClient.setBufferSize(256);
     connectMQTT();
+
+    // Web server
+    server.on("/status", HTTP_GET, [](AsyncWebServerRequest *request) {
+        Serial.println(" - Handling request for /status...");
+        request->send(200, "text/html", createStatusHTML());
+    });
+    server.begin();
+    Serial.println("Web server started on port 80");
 
     Serial.println("Setup complete. Starting loop...");
     prevMillis = millis();
