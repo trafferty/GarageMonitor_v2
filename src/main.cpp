@@ -26,6 +26,10 @@ unsigned long doorEvent_time_milli;
 unsigned long GarageLightOnPeriod_ms = 1000UL * 60 * 10;
 bool garageLightOn = false;
 
+// Periodic status publish
+#define STATUS_PUBLISH_INTERVAL_MS 300000UL  // 5 minutes
+unsigned long lastStatusPublish = 0;
+
 // Heartbeat
 unsigned long prevMillis;
 unsigned long HB_period_ms = 1000;
@@ -195,6 +199,7 @@ void setup() {
 
     Serial.println("Setup complete. Starting loop...");
     prevMillis = millis();
+    lastStatusPublish = millis();
 }
 
 void loop() {
@@ -216,6 +221,14 @@ void loop() {
         connectMQTT();
     }
     mqttClient.loop();
+
+    // Periodic status publish (every 5 minutes regardless of state change)
+    if (millis() - lastStatusPublish >= STATUS_PUBLISH_INTERVAL_MS) {
+        lastStatusPublish = millis();
+        if (doorState != state_unknown) {
+            publishDoorEvent(doorState == state_open ? "open" : "closed");
+        }
+    }
 
     // Door state machine
     bool garageDoor_current = digitalRead(in_GarageDoor);
