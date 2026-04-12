@@ -2,12 +2,10 @@
 #include <ESP8266WiFi.h>
 #include <WiFiClientSecure.h>
 #include <PubSubClient.h>
-#include <NTPClient.h>
-#include <WiFiUdp.h>
 #include <time.h>
 #include "credentials.h"
 
-#define version_str "v0.7-2026-04-11(add WiFi, MQTT, NTP)"
+#define version_str "v0.8-2026-04-12(configTime NTP with DST)"
 
 // GPIO assignments
 const int in_GarageDoor    = D5;
@@ -18,9 +16,6 @@ const int out_HB_LED       = D0;
 
 // MQTT topic
 static const char* TOPIC_GARAGE = "crowpanel/garage";
-
-// Timing
-#define NTP_INTERVAL_MS 3600000UL  // 1 hour
 
 // Door state
 typedef enum { state_unknown, state_open, state_closed } Door_States_t;
@@ -36,9 +31,6 @@ unsigned long HB_period_ms = 1000;
 // Network
 BearSSL::WiFiClientSecure wifiClientSecure;
 PubSubClient mqttClient(wifiClientSecure);
-WiFiUDP ntpUDP;
-NTPClient timeClient(ntpUDP);
-unsigned long lastNTPUpdate = 0;
 int reconnectAttempts = 0;
 
 // Forward declarations
@@ -86,18 +78,11 @@ void connectMQTT() {
 }
 
 String buildTimeDateStr() {
-    time_t epochTime = timeClient.getEpochTime();
-    struct tm *ptm = gmtime(&epochTime);
-    int yr  = ptm->tm_year + 1900;
-    int mon = ptm->tm_mon  + 1;
-    int day = ptm->tm_mday;
-    String ts = String(yr) + "-";
-    if (mon < 10) ts += "0";
-    ts += String(mon) + "-";
-    if (day < 10) ts += "0";
-    ts += String(day) + "T";
-    ts += timeClient.getFormattedTime();
-    return ts;
+    time_t now = time(nullptr);
+    struct tm *ptm = localtime(&now);
+    char buf[32];
+    strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%S", ptm);
+    return String(buf);
 }
 
 void publishDoorEvent(const char* event) {
@@ -137,14 +122,18 @@ void setup() {
 
     connectWiFi();
 
-    // NTP setup
-    timeClient.begin();
-    timeClient.setTimeOffset(-6 * 3600);  // CST (UTC-6)
-    delay(1000);
-    timeClient.update();
+    // NTP setup — POSIX tz string handles CST/CDT DST transitions automatically
+    configTime("CST6CDT,M3.2.0,M11.1.0", "pool.ntp.org", "time.nist.gov");
+    Serial.print("Waiting for NTP sync");
+    time_t now = time(nullptr);
+    while (now < 100000) {
+        delay(500);
+        Serial.print(".");
+        now = time(nullptr);
+    }
+    Serial.println();
     Serial.print("NTP time: ");
-    Serial.println(timeClient.getFormattedTime());
-    lastNTPUpdate = millis();
+    Serial.println(buildTimeDateStr());
 
     // MQTT setup
     wifiClientSecure.setInsecure();
@@ -175,12 +164,6 @@ void loop() {
         connectMQTT();
     }
     mqttClient.loop();
-
-    // NTP hourly refresh
-    if (millis() - lastNTPUpdate >= NTP_INTERVAL_MS) {
-        lastNTPUpdate = millis();
-        timeClient.update();
-    }
 
     // Door state machine
     bool garageDoor_current = digitalRead(in_GarageDoor);
