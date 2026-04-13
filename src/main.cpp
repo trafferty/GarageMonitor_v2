@@ -57,6 +57,7 @@ bool connectMQTT();
 String buildTimeDateStr();
 String createStatusHTML();
 void publishDoorEvent(const char* event);
+void publishDoorStatus(const char* status);
 
 // Attempt WiFi connection with a timeout. Returns true if connected.
 // Never blocks indefinitely — the door state machine must keep running.
@@ -151,6 +152,21 @@ void publishDoorEvent(const char* event) {
     mqttClient.publish(TOPIC_GARAGE, payload, true);  // retained
 }
 
+void publishDoorStatus(const char* status) {
+    if (!mqttClient.connected()) {
+        Serial.println("MQTT not connected, skipping publish");
+        return;
+    }
+    char payload[96];
+    String ts = buildTimeDateStr();
+    snprintf(payload, sizeof(payload), "{\"status\":\"%s\",\"ts\":\"%s\"}", status, ts.c_str());
+    Serial.print("Publish ");
+    Serial.print(TOPIC_GARAGE);
+    Serial.print(": ");
+    Serial.println(payload);
+    mqttClient.publish(TOPIC_GARAGE, payload, true);  // retained
+}
+
 void setup() {
     Serial.begin(115200);
 
@@ -219,6 +235,7 @@ void setup() {
     doorEvent_time_milli = millis();
     Serial.print("Initial door state: ");
     Serial.println(doorState == state_open ? "open" : "closed");
+    publishDoorStatus(doorState == state_open ? "open" : "closed");
 
     prevMillis = millis();
     lastStatusPublish = millis();
@@ -256,15 +273,8 @@ void loop() {
     // Periodic status publish (every 5 minutes regardless of state change)
     if (millis() - lastStatusPublish >= STATUS_PUBLISH_INTERVAL_MS) {
         lastStatusPublish = millis();
-        if (doorState != state_unknown && mqttClient.connected()) {
-            char payload[96];
-            const char* stateStr = (doorState == state_open) ? "open" : "closed";
-            snprintf(payload, sizeof(payload), "{\"status\":\"%s\",\"ts\":\"%s\"}", stateStr, buildTimeDateStr().c_str());
-            Serial.print("Publish status ");
-            Serial.print(TOPIC_GARAGE);
-            Serial.print(": ");
-            Serial.println(payload);
-            mqttClient.publish(TOPIC_GARAGE, payload, true);
+        if (doorState != state_unknown) {
+            publishDoorStatus(doorState == state_open ? "open" : "closed");
         }
     }
 
